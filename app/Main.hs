@@ -1,18 +1,35 @@
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE ScopedTypeVariables, ForeignFunctionInterface, CPP #-}
 module Main(main) where
 import Control.Exception (SomeException, bracket, catch)
 import Foreign.Ptr (nullPtr)
 import System.Exit (ExitCode(ExitSuccess), exitWith)
 import System.Win32.DLL (getModuleHandle)
 import qualified Graphics.Win32
+import Control.Concurrent (forkOS)
+import Data.Bits ((.|.))
+import System.Win32.Types (HINSTANCE, BOOL, INT)
+
+#if defined(i386_HOST_ARCH)
+# define WINDOWS_CCONV stdcall
+#elif defined(x86_64_HOST_ARCH)
+# define WINDOWS_CCONV ccall
+#else
+# error Unknown mingw32 arch
+#endif
+
+foreign import WINDOWS_CCONV safe "WinMain.h GuiInit"
+    guiInit :: HINSTANCE -> IO INT
 
 iDM_EXIT = 1
 
 main :: IO ()
-main =
-  Graphics.Win32.allocaPAINTSTRUCT $ \ lpps -> do
-  hwnd <- createWindow 200 200 (wndProc lpps onPaint)
-  messagePump hwnd
+main = do
+  hinst <- getModuleHandle Nothing
+  guiInit hinst
+  return ()
+  -- Graphics.Win32.allocaPAINTSTRUCT $ \ lpps -> do
+  -- hwnd <- createWindow 200 200 (wndProc lpps onPaint)
+  -- messagePump hwnd
 {-
  OnPaint handler for a window - draw a string centred
  inside it.
@@ -30,11 +47,13 @@ onPaint (_,_,w,h) hdc = do
 
 showContextMenu :: Graphics.Win32.HWND -> IO ()
 showContextMenu hwnd = do
-    hMenu <- Graphics.Win32.createPopupMenu
-    pt <- Graphics.Win32.getCursorPos
-    Graphics.Win32.appendMenu hMenu Graphics.Win32.mFT_STRING iDM_EXIT $ Just "&Exit"
-    Graphics.Win32.trackPopupMenuEx hMenu Graphics.Win32.tPM_RIGHTBUTTON (fromIntegral $ fst pt) (fromIntegral $ snd pt) hwnd Nothing
-    Graphics.Win32.destroyMenu hMenu
+    forkOS $ do
+      hMenu <- Graphics.Win32.createPopupMenu
+      pt <- Graphics.Win32.getCursorPos
+      Graphics.Win32.appendMenu hMenu Graphics.Win32.mFT_STRING iDM_EXIT $ Just "&Exit"
+      Graphics.Win32.trackPopupMenuEx hMenu (Graphics.Win32.tPM_RIGHTBUTTON .|. Graphics.Win32.tPM_NONOTIFY) (fromIntegral $ fst pt) (fromIntegral $ snd pt) hwnd Nothing
+      Graphics.Win32.destroyMenu hMenu
+    return ()
 
 wndProc :: Graphics.Win32.LPPAINTSTRUCT
 	-> (Graphics.Win32.RECT -> Graphics.Win32.HDC -> IO ()) -- on paint action
